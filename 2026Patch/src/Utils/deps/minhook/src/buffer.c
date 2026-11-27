@@ -29,11 +29,20 @@
 #include <windows.h>
 #include "buffer.h"
 
+// Patch 2026: resolved at runtime so the DLL still loads on pre-VirtualAlloc2
+// systems. Declared locally rather than relying on SDK macro gating.
+typedef struct _MH_ADDRESS_REQUIREMENTS
+{
+    PVOID LowestStartingAddress;
+    PVOID HighestEndingAddress;
+    SIZE_T Alignment;
+} MH_ADDRESS_REQUIREMENTS;
+
+typedef PVOID(WINAPI* MH_VIRTUALALLOC2)(HANDLE, PVOID, SIZE_T, ULONG, ULONG,
+                                        const MH_ADDRESS_REQUIREMENTS*, PVOID, ULONG);
+
 // Size of each memory block. (= page size of VirtualAlloc)
 #define MEMORY_BLOCK_SIZE 0x1000
-
-// Max range for seeking a memory block. (= 1024MB)
-#define MAX_MEMORY_RANGE 0x40000000
 
 // Memory protection flags to check the executable address.
 #define PAGE_EXECUTE_FLAGS \
@@ -85,143 +94,65 @@ VOID UninitializeBuffer(VOID)
 }
 
 //-------------------------------------------------------------------------
-#if defined(_M_X64) || defined(__x86_64__)
-static LPVOID FindPrevFreeRegion(LPVOID pAddress, LPVOID pMinAddr, DWORD dwAllocationGranularity)
-{
-    ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
-
-    // Round down to the allocation granularity.
-    tryAddr -= tryAddr % dwAllocationGranularity;
-
-    // Start from the previous allocation granularity multiply.
-    tryAddr -= dwAllocationGranularity;
-
-    while (tryAddr >= (ULONG_PTR)pMinAddr)
-    {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery((LPVOID)tryAddr, &mbi, sizeof(mbi)) == 0)
-            break;
-
-        if (mbi.State == MEM_FREE)
-            return (LPVOID)tryAddr;
-
-        if ((ULONG_PTR)mbi.AllocationBase < dwAllocationGranularity)
-            break;
-
-        tryAddr = (ULONG_PTR)mbi.AllocationBase - dwAllocationGranularity;
-    }
-
-    return NULL;
-}
-#endif
-
-//-------------------------------------------------------------------------
-#if defined(_M_X64) || defined(__x86_64__)
-static LPVOID FindNextFreeRegion(LPVOID pAddress, LPVOID pMaxAddr, DWORD dwAllocationGranularity)
-{
-    ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
-
-    // Round down to the allocation granularity.
-    tryAddr -= tryAddr % dwAllocationGranularity;
-
-    // Start from the next allocation granularity multiply.
-    tryAddr += dwAllocationGranularity;
-
-    while (tryAddr <= (ULONG_PTR)pMaxAddr)
-    {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery((LPVOID)tryAddr, &mbi, sizeof(mbi)) == 0)
-            break;
-
-        if (mbi.State == MEM_FREE)
-            return (LPVOID)tryAddr;
-
-        tryAddr = (ULONG_PTR)mbi.BaseAddress + mbi.RegionSize;
-
-        // Round up to the next allocation granularity.
-        tryAddr += dwAllocationGranularity - 1;
-        tryAddr -= tryAddr % dwAllocationGranularity;
-    }
-
-    return NULL;
-}
-#endif
+// Patch 2026: FindPrevFreeRegion/FindNextFreeRegion and MAX_MEMORY_RANGE were
+// removed. Their ±1GB page scan failed on the supported client, where only 4KB
+// guard-page gaps exist near a hook target. VirtualAlloc2 now asks the OS for a
+// page inside the rel32-safe window; a fallback and the trampoline guard handle
+// systems where that is unavailable.
 
 //-------------------------------------------------------------------------
 static PMEMORY_BLOCK GetMemoryBlock(LPVOID pOrigin)
 {
     PMEMORY_BLOCK pBlock;
-#if defined(_M_X64) || defined(__x86_64__)
-    ULONG_PTR minAddr;
-    ULONG_PTR maxAddr;
+    UNREFERENCED_PARAMETER(pOrigin);
 
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    minAddr = (ULONG_PTR)si.lpMinimumApplicationAddress;
-    maxAddr = (ULONG_PTR)si.lpMaximumApplicationAddress;
-
-    // pOrigin ± 512MB
-    if ((ULONG_PTR)pOrigin > MAX_MEMORY_RANGE && minAddr < (ULONG_PTR)pOrigin - MAX_MEMORY_RANGE)
-        minAddr = (ULONG_PTR)pOrigin - MAX_MEMORY_RANGE;
-
-    if (maxAddr > (ULONG_PTR)pOrigin + MAX_MEMORY_RANGE)
-        maxAddr = (ULONG_PTR)pOrigin + MAX_MEMORY_RANGE;
-
-    // Make room for MEMORY_BLOCK_SIZE bytes.
-    maxAddr -= MEMORY_BLOCK_SIZE - 1;
-#endif
-
-    // Look the registered blocks for a reachable one.
+    // Look the registered blocks for one with a free slot. Blocks are now
+    // requested inside a rel32-safe window around their first target; the
+    // guard in CreateTrampolineFunction still rejects any that end up too far
+    // from a later target.
     for (pBlock = g_pMemoryBlocks; pBlock != NULL; pBlock = pBlock->pNext)
     {
-#if defined(_M_X64) || defined(__x86_64__)
-        // Ignore the blocks too far.
-        if ((ULONG_PTR)pBlock < minAddr || (ULONG_PTR)pBlock >= maxAddr)
-            continue;
-#endif
         // The block has at least one unused slot.
         if (pBlock->pFree != NULL)
             return pBlock;
     }
 
-#if defined(_M_X64) || defined(__x86_64__)
-    // Alloc a new block above if not found.
+    // Patch 2026: ask the OS for a block inside the signed-32-bit range of the
+    // target. RIP-relative operands copied into the trampoline are rewritten
+    // as 32-bit displacements, so a distant block can make them unusable.
+    // VirtualAlloc2 is resolved dynamically because it is Windows 10+ only.
     {
-        LPVOID pAlloc = pOrigin;
-        while ((ULONG_PTR)pAlloc >= minAddr)
+        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+        MH_VIRTUALALLOC2 virtualAlloc2 = kernel32 != NULL
+            ? (MH_VIRTUALALLOC2)GetProcAddress(kernel32, "VirtualAlloc2")
+            : NULL;
+        if (virtualAlloc2 != NULL)
         {
-            pAlloc = FindPrevFreeRegion(pAlloc, (LPVOID)minAddr, si.dwAllocationGranularity);
-            if (pAlloc == NULL)
-                break;
-
-            pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-                pAlloc, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-            if (pBlock != NULL)
-                break;
+            SYSTEM_INFO si;
+            ULONG_PTR low, high, origin = (ULONG_PTR)pOrigin;
+            GetSystemInfo(&si);
+            low = (ULONG_PTR)si.lpMinimumApplicationAddress;
+            high = (ULONG_PTR)si.lpMaximumApplicationAddress;
+            if (origin > (ULONG_PTR)0x7FFFFFFF && low < origin - (ULONG_PTR)0x7FFFFFFF)
+                low = origin - (ULONG_PTR)0x7FFFFFFF;
+            if (high > origin + (ULONG_PTR)0x7FFFFFFF)
+                high = origin + (ULONG_PTR)0x7FFFFFFF;
+            if (low < high)
+            {
+                MH_ADDRESS_REQUIREMENTS requirements = {
+                    (PVOID)low, (PVOID)high, si.dwAllocationGranularity};
+                pBlock = (PMEMORY_BLOCK)virtualAlloc2(GetCurrentProcess(), NULL, MEMORY_BLOCK_SIZE,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE, &requirements, NULL, 0);
+            }
         }
     }
 
-    // Alloc a new block below if not found.
+    // Fallback for systems without VirtualAlloc2, or when no page exists in
+    // the window. The RIP-relative guard turns an unusable block into a safe
+    // hook-creation failure instead of a wrong jump.
     if (pBlock == NULL)
-    {
-        LPVOID pAlloc = pOrigin;
-        while ((ULONG_PTR)pAlloc <= maxAddr)
-        {
-            pAlloc = FindNextFreeRegion(pAlloc, (LPVOID)maxAddr, si.dwAllocationGranularity);
-            if (pAlloc == NULL)
-                break;
-
-            pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-                pAlloc, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-            if (pBlock != NULL)
-                break;
-        }
-    }
-#else
-    // In x86 mode, a memory block can be placed anywhere.
-    pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-        NULL, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-#endif
+        pBlock = (PMEMORY_BLOCK)VirtualAlloc(
+            NULL, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 
     if (pBlock != NULL)
     {

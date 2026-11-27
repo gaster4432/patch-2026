@@ -157,8 +157,19 @@ BOOL CreateTrampolineFunction(PTRAMPOLINE ct)
 
             // Relative address is stored at (instruction length - immediate value length - 4).
             pRelAddr = (PUINT32)(instBuf + hs.len - ((hs.flags & 0x3C) >> 2) - 4);
-            *pRelAddr
-                = (UINT32)((pOldInst + hs.len + (INT32)hs.disp.disp32) - (pNewInst + hs.len));
+
+            // Patch 2026: a trampoline block is no longer required to be near the
+            // target, so the rewritten displacement can exceed signed 32-bit.
+            // Reject that function instead of writing a truncated operand that
+            // would make the copied instruction jump to an unrelated address.
+            {
+                ULONG_PTR destination = pOldInst + hs.len + (INT32)hs.disp.disp32;
+                ULONG_PTR relative = destination - (pNewInst + hs.len);
+                if (relative > (ULONG_PTR)0x7FFFFFFF &&
+                    relative < (ULONG_PTR)0xFFFFFFFF80000000ULL)
+                    return FALSE;
+                *pRelAddr = (UINT32)relative;
+            }
 
             // Complete the function if JMP (FF /4).
             if (hs.opcode == 0xFF && hs.modrm_reg == 4)
