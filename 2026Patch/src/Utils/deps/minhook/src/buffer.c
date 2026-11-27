@@ -32,9 +32,6 @@
 // Size of each memory block. (= page size of VirtualAlloc)
 #define MEMORY_BLOCK_SIZE 0x1000
 
-// Max range for seeking a memory block. (= 1024MB)
-#define MAX_MEMORY_RANGE 0x40000000
-
 // Memory protection flags to check the executable address.
 #define PAGE_EXECUTE_FLAGS \
     (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)
@@ -85,143 +82,40 @@ VOID UninitializeBuffer(VOID)
 }
 
 //-------------------------------------------------------------------------
-#if defined(_M_X64) || defined(__x86_64__)
-static LPVOID FindPrevFreeRegion(LPVOID pAddress, LPVOID pMinAddr, DWORD dwAllocationGranularity)
-{
-    ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
-
-    // Round down to the allocation granularity.
-    tryAddr -= tryAddr % dwAllocationGranularity;
-
-    // Start from the previous allocation granularity multiply.
-    tryAddr -= dwAllocationGranularity;
-
-    while (tryAddr >= (ULONG_PTR)pMinAddr)
-    {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery((LPVOID)tryAddr, &mbi, sizeof(mbi)) == 0)
-            break;
-
-        if (mbi.State == MEM_FREE)
-            return (LPVOID)tryAddr;
-
-        if ((ULONG_PTR)mbi.AllocationBase < dwAllocationGranularity)
-            break;
-
-        tryAddr = (ULONG_PTR)mbi.AllocationBase - dwAllocationGranularity;
-    }
-
-    return NULL;
-}
-#endif
-
-//-------------------------------------------------------------------------
-#if defined(_M_X64) || defined(__x86_64__)
-static LPVOID FindNextFreeRegion(LPVOID pAddress, LPVOID pMaxAddr, DWORD dwAllocationGranularity)
-{
-    ULONG_PTR tryAddr = (ULONG_PTR)pAddress;
-
-    // Round down to the allocation granularity.
-    tryAddr -= tryAddr % dwAllocationGranularity;
-
-    // Start from the next allocation granularity multiply.
-    tryAddr += dwAllocationGranularity;
-
-    while (tryAddr <= (ULONG_PTR)pMaxAddr)
-    {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery((LPVOID)tryAddr, &mbi, sizeof(mbi)) == 0)
-            break;
-
-        if (mbi.State == MEM_FREE)
-            return (LPVOID)tryAddr;
-
-        tryAddr = (ULONG_PTR)mbi.BaseAddress + mbi.RegionSize;
-
-        // Round up to the next allocation granularity.
-        tryAddr += dwAllocationGranularity - 1;
-        tryAddr -= tryAddr % dwAllocationGranularity;
-    }
-
-    return NULL;
-}
-#endif
+// Patch 2026: FindPrevFreeRegion/FindNextFreeRegion and MAX_MEMORY_RANGE were
+// removed. They existed to keep trampolines within 1GB of the target, which is
+// unnecessary on x64 (branches are absolute) and fails on the supported client
+// when no 64KB-granular free page exists near a hook target.
 
 //-------------------------------------------------------------------------
 static PMEMORY_BLOCK GetMemoryBlock(LPVOID pOrigin)
 {
     PMEMORY_BLOCK pBlock;
 #if defined(_M_X64) || defined(__x86_64__)
-    ULONG_PTR minAddr;
-    ULONG_PTR maxAddr;
-
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    minAddr = (ULONG_PTR)si.lpMinimumApplicationAddress;
-    maxAddr = (ULONG_PTR)si.lpMaximumApplicationAddress;
-
-    // pOrigin ± 512MB
-    if ((ULONG_PTR)pOrigin > MAX_MEMORY_RANGE && minAddr < (ULONG_PTR)pOrigin - MAX_MEMORY_RANGE)
-        minAddr = (ULONG_PTR)pOrigin - MAX_MEMORY_RANGE;
-
-    if (maxAddr > (ULONG_PTR)pOrigin + MAX_MEMORY_RANGE)
-        maxAddr = (ULONG_PTR)pOrigin + MAX_MEMORY_RANGE;
-
-    // Make room for MEMORY_BLOCK_SIZE bytes.
-    maxAddr -= MEMORY_BLOCK_SIZE - 1;
+    // Patch 2026: no proximity requirement. The supported client can map
+    // GameAssembly where only 4KB guard-page gaps exist near a hook target, so
+    // the ranged search below cannot find a 64KB-granular block. x64 trampoline
+    // branches are absolute; the only proximity-sensitive operands are
+    // RIP-relative displacements rewritten into copied instructions, and
+    // CreateTrampolineFunction now rejects those that do not fit in 32 bits.
+    UNREFERENCED_PARAMETER(pOrigin);
 #endif
 
-    // Look the registered blocks for a reachable one.
+    // Look the registered blocks for one with a free slot. Patch 2026: on x64
+    // there is no distance filter; a block outside the old search window is
+    // still safe because of the RIP-relative guard in CreateTrampolineFunction.
     for (pBlock = g_pMemoryBlocks; pBlock != NULL; pBlock = pBlock->pNext)
     {
-#if defined(_M_X64) || defined(__x86_64__)
-        // Ignore the blocks too far.
-        if ((ULONG_PTR)pBlock < minAddr || (ULONG_PTR)pBlock >= maxAddr)
-            continue;
-#endif
         // The block has at least one unused slot.
         if (pBlock->pFree != NULL)
             return pBlock;
     }
 
-#if defined(_M_X64) || defined(__x86_64__)
-    // Alloc a new block above if not found.
-    {
-        LPVOID pAlloc = pOrigin;
-        while ((ULONG_PTR)pAlloc >= minAddr)
-        {
-            pAlloc = FindPrevFreeRegion(pAlloc, (LPVOID)minAddr, si.dwAllocationGranularity);
-            if (pAlloc == NULL)
-                break;
-
-            pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-                pAlloc, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-            if (pBlock != NULL)
-                break;
-        }
-    }
-
-    // Alloc a new block below if not found.
-    if (pBlock == NULL)
-    {
-        LPVOID pAlloc = pOrigin;
-        while ((ULONG_PTR)pAlloc <= maxAddr)
-        {
-            pAlloc = FindNextFreeRegion(pAlloc, (LPVOID)maxAddr, si.dwAllocationGranularity);
-            if (pAlloc == NULL)
-                break;
-
-            pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-                pAlloc, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-            if (pBlock != NULL)
-                break;
-        }
-    }
-#else
-    // In x86 mode, a memory block can be placed anywhere.
+    // Patch 2026: ask the OS for a block anywhere. The old x64 search only
+    // accepted pages within 1GB of the target; on the supported client there
+    // can be none, and walking guard-page gaps never yields a usable block.
     pBlock = (PMEMORY_BLOCK)VirtualAlloc(
         NULL, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-#endif
 
     if (pBlock != NULL)
     {

@@ -733,3 +733,29 @@ The independent Rooms 2 error 8718 occurs in ObjectModelRoomScope.VPDQGQJOTAG:
 (+54). A null initial save fails before spawning; version zero is rejected as an
 obsolete experimental format. The supported client reports current OM format 198
 (9934F20). Repair the server creation/save metadata; do not suppress this loader error.
+
+### MinHook trampoline allocation on a dense client address space (2026-11-26)
+
+On a Windows 10 22H2 machine with high-entropy ASLR off for `RecRoom.exe`, the
+supported client mapped GameAssembly at `0x6C9E0000` instead of a high address.
+Upstream MinHook searches only ±1GB of a hook target for a 64KB-granular RWX
+trampoline block; that window contained only 4KB guard-page gaps, so the first
+`MH_CreateHook` returned `MH_ERROR_MEMORY_ALLOC` (status 9) and initialization
+aborted with status 5 before any hook was enabled. Enabling per-app BottomUp and
+HighEntropy ASLR moved GameAssembly higher but did not fix it: no usable block
+existed within ±1GB there either, and the nearest free region was several GB away.
+
+The vendored allocator was changed deliberately. `GetMemoryBlock` no longer
+filters blocks by distance and allocates through `VirtualAlloc(NULL, ...)`;
+`FindPrevFreeRegion`, `FindNextFreeRegion` and `MAX_MEMORY_RANGE` were removed.
+x64 trampoline branches are absolute, so proximity is only needed for
+RIP-relative operands copied from the target prologue. `CreateTrampolineFunction`
+now rejects a rewritten displacement that does not fit signed 32-bit, turning a
+distant trampoline into `MH_ERROR_UNSUPPORTED_FUNCTION` instead of a wrong jump.
+
+Format check and package build passed with exactly the eight allowlisted files.
+The restart of the fingerprinted client logged all 23 hooks with
+`hooks enabled status=0` and live HTTP 200 responses from the configured
+endpoints. This validates startup and hook installation on that machine, not
+feature-by-feature gameplay. The per-app ASLR setting is not required by this
+fix and can be removed.
