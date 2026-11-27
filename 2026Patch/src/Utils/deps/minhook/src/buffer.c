@@ -29,6 +29,18 @@
 #include <windows.h>
 #include "buffer.h"
 
+// Patch 2026: resolved at runtime so the DLL still loads on pre-VirtualAlloc2
+// systems. Declared locally rather than relying on SDK macro gating.
+typedef struct _MH_ADDRESS_REQUIREMENTS
+{
+    PVOID LowestStartingAddress;
+    PVOID HighestEndingAddress;
+    SIZE_T Alignment;
+} MH_ADDRESS_REQUIREMENTS;
+
+typedef PVOID(WINAPI* MH_VIRTUALALLOC2)(HANDLE, PVOID, SIZE_T, ULONG, ULONG,
+                                        const MH_ADDRESS_REQUIREMENTS*, PVOID, ULONG);
+
 // Size of each memory block. (= page size of VirtualAlloc)
 #define MEMORY_BLOCK_SIZE 0x1000
 
@@ -83,27 +95,21 @@ VOID UninitializeBuffer(VOID)
 
 //-------------------------------------------------------------------------
 // Patch 2026: FindPrevFreeRegion/FindNextFreeRegion and MAX_MEMORY_RANGE were
-// removed. They existed to keep trampolines within 1GB of the target, which is
-// unnecessary on x64 (branches are absolute) and fails on the supported client
-// when no 64KB-granular free page exists near a hook target.
+// removed. Their ±1GB page scan failed on the supported client, where only 4KB
+// guard-page gaps exist near a hook target. VirtualAlloc2 now asks the OS for a
+// page inside the rel32-safe window; a fallback and the trampoline guard handle
+// systems where that is unavailable.
 
 //-------------------------------------------------------------------------
 static PMEMORY_BLOCK GetMemoryBlock(LPVOID pOrigin)
 {
     PMEMORY_BLOCK pBlock;
-#if defined(_M_X64) || defined(__x86_64__)
-    // Patch 2026: no proximity requirement. The supported client can map
-    // GameAssembly where only 4KB guard-page gaps exist near a hook target, so
-    // the ranged search below cannot find a 64KB-granular block. x64 trampoline
-    // branches are absolute; the only proximity-sensitive operands are
-    // RIP-relative displacements rewritten into copied instructions, and
-    // CreateTrampolineFunction now rejects those that do not fit in 32 bits.
     UNREFERENCED_PARAMETER(pOrigin);
-#endif
 
-    // Look the registered blocks for one with a free slot. Patch 2026: on x64
-    // there is no distance filter; a block outside the old search window is
-    // still safe because of the RIP-relative guard in CreateTrampolineFunction.
+    // Look the registered blocks for one with a free slot. Blocks are now
+    // requested inside a rel32-safe window around their first target; the
+    // guard in CreateTrampolineFunction still rejects any that end up too far
+    // from a later target.
     for (pBlock = g_pMemoryBlocks; pBlock != NULL; pBlock = pBlock->pNext)
     {
         // The block has at least one unused slot.
@@ -111,11 +117,42 @@ static PMEMORY_BLOCK GetMemoryBlock(LPVOID pOrigin)
             return pBlock;
     }
 
-    // Patch 2026: ask the OS for a block anywhere. The old x64 search only
-    // accepted pages within 1GB of the target; on the supported client there
-    // can be none, and walking guard-page gaps never yields a usable block.
-    pBlock = (PMEMORY_BLOCK)VirtualAlloc(
-        NULL, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    // Patch 2026: ask the OS for a block inside the signed-32-bit range of the
+    // target. RIP-relative operands copied into the trampoline are rewritten
+    // as 32-bit displacements, so a distant block can make them unusable.
+    // VirtualAlloc2 is resolved dynamically because it is Windows 10+ only.
+    {
+        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+        MH_VIRTUALALLOC2 virtualAlloc2 = kernel32 != NULL
+            ? (MH_VIRTUALALLOC2)GetProcAddress(kernel32, "VirtualAlloc2")
+            : NULL;
+        if (virtualAlloc2 != NULL)
+        {
+            SYSTEM_INFO si;
+            ULONG_PTR low, high, origin = (ULONG_PTR)pOrigin;
+            GetSystemInfo(&si);
+            low = (ULONG_PTR)si.lpMinimumApplicationAddress;
+            high = (ULONG_PTR)si.lpMaximumApplicationAddress;
+            if (origin > (ULONG_PTR)0x7FFFFFFF && low < origin - (ULONG_PTR)0x7FFFFFFF)
+                low = origin - (ULONG_PTR)0x7FFFFFFF;
+            if (high > origin + (ULONG_PTR)0x7FFFFFFF)
+                high = origin + (ULONG_PTR)0x7FFFFFFF;
+            if (low < high)
+            {
+                MH_ADDRESS_REQUIREMENTS requirements = {
+                    (PVOID)low, (PVOID)high, si.dwAllocationGranularity};
+                pBlock = (PMEMORY_BLOCK)virtualAlloc2(GetCurrentProcess(), NULL, MEMORY_BLOCK_SIZE,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE, &requirements, NULL, 0);
+            }
+        }
+    }
+
+    // Fallback for systems without VirtualAlloc2, or when no page exists in
+    // the window. The RIP-relative guard turns an unusable block into a safe
+    // hook-creation failure instead of a wrong jump.
+    if (pBlock == NULL)
+        pBlock = (PMEMORY_BLOCK)VirtualAlloc(
+            NULL, MEMORY_BLOCK_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 
     if (pBlock != NULL)
     {

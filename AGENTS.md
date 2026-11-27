@@ -745,13 +745,21 @@ aborted with status 5 before any hook was enabled. Enabling per-app BottomUp and
 HighEntropy ASLR moved GameAssembly higher but did not fix it: no usable block
 existed within ±1GB there either, and the nearest free region was several GB away.
 
-The vendored allocator was changed deliberately. `GetMemoryBlock` no longer
-filters blocks by distance and allocates through `VirtualAlloc(NULL, ...)`;
-`FindPrevFreeRegion`, `FindNextFreeRegion` and `MAX_MEMORY_RANGE` were removed.
-x64 trampoline branches are absolute, so proximity is only needed for
-RIP-relative operands copied from the target prologue. `CreateTrampolineFunction`
-now rejects a rewritten displacement that does not fit signed 32-bit, turning a
-distant trampoline into `MH_ERROR_UNSUPPORTED_FUNCTION` instead of a wrong jump.
+The vendored allocator was changed deliberately. `FindPrevFreeRegion`,
+`FindNextFreeRegion` and `MAX_MEMORY_RANGE` were removed. `GetMemoryBlock` now
+uses `VirtualAlloc2` with `MEM_ADDRESS_REQUIREMENTS` (resolved at runtime, with
+a `VirtualAlloc(NULL, ...)` fallback) to request a page inside the signed-32-bit
+window around each target. x64 trampoline branches are absolute, so proximity
+is only needed for RIP-relative operands copied from the target prologue.
+`CreateTrampolineFunction` rejects a rewritten displacement that does not fit
+signed 32-bit, turning an unusable trampoline into
+`MH_ERROR_UNSUPPORTED_FUNCTION` instead of a wrong jump.
+
+An initial version that only used the unqualified fallback worked on some
+launches but returned status 8 on others: `VirtualAlloc(NULL, ...)` sometimes
+placed the block outside the rel32 window, so a hook whose prologue contained
+a RIP-relative operand was rejected. The address-restricted request removes
+that launch-to-launch dependence where Windows can supply a nearby page.
 
 Format check and package build passed with exactly the eight allowlisted files.
 The restart of the fingerprinted client logged all 23 hooks with
