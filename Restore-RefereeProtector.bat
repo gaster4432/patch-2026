@@ -1,7 +1,7 @@
 @echo off
-rem Reverts Install-PreserveLoader.bat: moves preserve\Referee.dll back to Referee.dll and
-rem restores 2026patch.dll to the game root. The game no longer loads through the preservation
-rem loader afterwards.
+rem Reverts Install-Recrekt.bat: moves preserve\Referee.dll back to Referee.dll and
+rem restores 2026patch.dll to the game root. The game no longer loads through Recrekt
+rem afterwards.
 rem Other modules you added under preserve\modules\ are left untouched on purpose.
 setlocal
 cd /d "%~dp0"
@@ -24,5 +24,5 @@ move /y "preserve\Referee.dll" "Referee.dll" >nul || (
 )
 if exist "preserve\modules\2026patch.dll" move /y "preserve\modules\2026patch.dll" "2026patch.dll" >nul
 echo [OK] The protector is back at Referee.dll.
-echo      PreserveLoader.dll is still in this folder; the game no longer uses it.
+echo      Recrekt.dll is still in this folder; the game no longer uses it.
 echo      Any extra modules under preserve\modules\ were left alone.

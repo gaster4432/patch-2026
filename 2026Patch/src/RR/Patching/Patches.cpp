@@ -714,7 +714,7 @@ namespace RR::Patches {
     // Record the observed service-arena crash without swallowing the exception or
     // changing Referee control flow. No request bodies or authentication data are logged.
     static LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
-        // Under the preservation loader, Referee.dll in the module list is the proxy;
+        // Under Recrekt, Referee.dll in the module list is the proxy;
         // anchor diagnostics to the real protector the loader exposes instead.
         const uintptr_t referee = RR::BuildGuard::LoadedProtectorBase();
         const uintptr_t address = reinterpret_cast<uintptr_t>(fault->ExceptionRecord->ExceptionAddress);

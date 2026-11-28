@@ -32,12 +32,12 @@ jobs:
           if-no-files-found: error
           path: |
             x64/Release/2026patch.dll
-            x64/Release/PreserveLoader.dll
+            x64/Release/Recrekt.dll
             x64/Release/2026patch.ini
             x64/Release/RecRoomScreen.bat
             x64/Release/RecRoomVR.bat
-            x64/Release/Install-PreserveLoader.bat
-            x64/Release/RecRoomPreserve.bat
+            x64/Release/Install-Recrekt.bat
+            x64/Release/RecRoomRecrekt.bat
             x64/Release/Restore-RefereeProtector.bat
 
   release:
@@ -56,10 +56,10 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path dist\2026patch.dll, dist\PreserveLoader.dll, `
+          Compress-Archive -Path dist\2026patch.dll, dist\Recrekt.dll, `
             dist\2026patch.ini, `
             dist\RecRoomScreen.bat, dist\RecRoomVR.bat, `
-            dist\Install-PreserveLoader.bat, dist\RecRoomPreserve.bat, `
+            dist\Install-Recrekt.bat, dist\RecRoomRecrekt.bat, `
             dist\Restore-RefereeProtector.bat `
             -DestinationPath "2026Patch-$env:GITHUB_REF_NAME-x64.zip"
       - name: Create release

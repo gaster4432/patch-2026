@@ -19,7 +19,7 @@ namespace RR::BuildGuard {
         {L"Referee.dll", "5868C90A7C67757F3B678AA356CBD933D646C9749E0ACAA31B7DCC9EAEE12EAD"},
         {L"UnityPlayer.dll", "30F4A99C49566B2C5045469B5A39572DD2298ADC31F7FE2BC39D8BB8FC9D75BB"}};
 
-    // The preservation loader (PreserveLoader.dll) may be installed beside the game as
+    // Recrekt may be installed beside the game as
     // Referee.dll, in which case the pinned protector file lives at
     // <install folder>\preserve\Referee.dll and the root one is only the trampoline.
     // The hash boundary still fails closed: every pinned module must match.
@@ -44,13 +44,13 @@ namespace RR::BuildGuard {
     }
 
     // Load base to anchor protector-relative diagnostics: the real protector's
-    // base under the preservation loader, otherwise the Referee module itself.
+    // base under Recrekt, otherwise the Referee module itself.
     inline uintptr_t LoadedProtectorBase() {
         HMODULE module = GetModuleHandleW(L"Referee.dll");
         if (!module) {
             return 0;
         }
-        if (const FARPROC exported = GetProcAddress(module, "GetPreserveProtector")) {
+        if (const FARPROC exported = GetProcAddress(module, "GetRecrektProtector")) {
             const uintptr_t real = (uintptr_t)((void* (*)(void))exported)();
             if (real) {
                 return real;
@@ -145,7 +145,7 @@ namespace RR::BuildGuard {
             if (MatchesPath(rootPath.c_str(), module.hash)) {
                 continue;
             }
-            // When the preservation loader is installed, the pinned protector is
+            // When Recrekt is installed, the pinned protector is
             // the preserve\Referee.dll it loads; accept that layout too.
             if (wcscmp(module.name, L"Referee.dll") == 0 &&
                 MatchesPath((root + L"\\preserve\\Referee.dll").c_str(), module.hash)) {

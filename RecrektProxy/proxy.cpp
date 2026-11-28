@@ -1,4 +1,4 @@
-// PreserveLoader.dll -- Rec Room 2026 preservation proxy loader.
+// Recrekt.dll -- Rec Room 2026 protector proxy loader.
 //
 // Rec Room statically imports exactly one module, "Referee.dll" (the Themida
 // protector; the client links a single gated symbol, "jjiEVn"). A proxy under
@@ -22,7 +22,7 @@
 //   3. jjiEVn is exported by this loader and forwards to the protector's own
 //      jjiEVn, resolved lazily (the protector's export table only becomes
 //      usable after its unpack finishes).
-//   4. GetPreserveProtector() is exported so 2026patch.dll can find the
+//   4. GetRecrektProtector() is exported so 2026patch.dll can find the
 //      protector's load base even though "Referee.dll" in the module list is
 //      this proxy.
 //   5. A watcher thread waits for GameAssembly.dll to finish loading, then loads
@@ -31,7 +31,7 @@
 //      run first use a numeric prefix (e.g. 0000-core.dll). 2026patch.dll lives
 //      in that folder too. A module that fails to load is logged and skipped.
 //
-// Layout after Install-PreserveLoader.bat:
+// Layout after Install-Recrekt.bat:
 //   Referee.dll                    <- this loader (jjiEVn export)
 //   preserve\Referee.dll           <- the real protector, untouched
 //   preserve\modules\*.dll         <- the mods (2026patch.dll among them)
@@ -1228,7 +1228,7 @@ extern "C" bool EnsureGate(void) {
     return false;
 }
 
-extern "C" __declspec(dllexport) void* GetPreserveProtector(void) {
+extern "C" __declspec(dllexport) void* GetRecrektProtector(void) {
     g_protectorBase = FindProtectorModule();
     return (void*)g_protectorBase;
 }
@@ -1347,7 +1347,7 @@ static void OpenLogFile() {
         *slash = L'\0';
     }
     wchar_t logPath[MAX_PATH + 80]{};
-    _snwprintf_s(logPath, _countof(logPath), _TRUNCATE, L"%s\\preserve-loader.log", dir);
+    _snwprintf_s(logPath, _countof(logPath), _TRUNCATE, L"%s\\recrekt.log", dir);
     g_logHandle = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                               OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 }
@@ -1356,7 +1356,7 @@ BOOL WINAPI DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hModule);
         OpenLogFile();
-        Log("proxy attached; loading the protector");
+        Log("Recrekt attached; loading the protector");
 
         wchar_t dir[MAX_PATH] = {};
         GetModuleDir(nullptr, dir, MAX_PATH);

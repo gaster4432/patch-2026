@@ -55,13 +55,13 @@ inserts only a public key. Packaging rejects private RSA fields before copying
 output. Raw captures, credentials, private keys and development artifacts stay out
 of Git and release files.
 
-`Patch26Dist.zip` must contain exactly `2026patch.dll`, `PreserveLoader.dll`,
-`2026patch.ini`, `RecRoomScreen.bat`, `RecRoomVR.bat`, `Install-PreserveLoader.bat`,
-`RecRoomPreserve.bat` and `Restore-RefereeProtector.bat`. Use the explicit allowlist,
+`Patch26Dist.zip` must contain exactly `2026patch.dll`, `Recrekt.dll`,
+`2026patch.ini`, `RecRoomScreen.bat`, `RecRoomVR.bat`, `Install-Recrekt.bat`,
+`RecRoomRecrekt.bat` and `Restore-RefereeProtector.bat`. Use the explicit allowlist,
 never archive the output directory. Root launchers differ only in
 `+forcemode:screen` versus `+forcemode:vr`; keep shared behavior synchronized.
-They launch the client through the preservation loader, with no second process to
-start and nothing to leave running. `RecRoomPreserve.bat` is the same in screen
+They launch the client through Recrekt, with no second process to
+start and nothing to leave running. `RecRoomRecrekt.bat` is the same in screen
 mode and is the one to point users at when installing from source.
 
 CI checks formatting and builds/packages the native binaries, then uploads the
@@ -89,7 +89,7 @@ CI suite. Keep local investigation tooling outside the published tree.
 | `Utils/ScreenShareWire.h` | Verified screen-share byte-array wire encoding |
 | `Utils/deps/minhook` | Vendored hook dependency; preserve upstream/license text |
 
-The preservation loader is `PreserveProxy/`. Configuration and batch
+Recrekt lives in `RecrektProxy/`. Configuration and batch
 launchers live at the repository root; this guide owns technical maintenance notes.
 
 DllMain runs under the Windows loader lock. It creates the worker and closes its
@@ -148,9 +148,9 @@ handling and do not invent service approval.
 
 A loaded module says nothing about hook readiness.
 
-## Preservation proxy loader and the arena seam
+## Recrekt and the arena seam
 
-`PreserveProxy/` builds `PreserveLoader.dll`, which the client loads in place of
+`RecrektProxy/` builds `Recrekt.dll`, which the client loads in place of
 `Referee.dll` so the patch can be attached with no external program at all. The
 loader exports `jjiEVn` and forwards it to the real protector, which it loads
 from `preserve\Referee.dll`. `preserve\modules\*.dll` is the module folder: the
@@ -409,7 +409,7 @@ failures. `EnableTracing=true` enables routine HTTP/hook diagnostics. Capture em
 frame and sampled failures; module-scan/no-credit notices emit once. Never log
 credentials, paths/queries/headers, key contents or image bytes.
 
-Installation is verified by launching the client: `Install-PreserveLoader.bat`
+Installation is verified by launching the client: `Install-Recrekt.bat`
 must leave `preserve\Referee.dll` and `preserve\modules\2026patch.dll` in place,
 and `2026patch.log` must report `hooks enabled status=0`. Formatting/build/package
 checks verify source and distribution integrity,

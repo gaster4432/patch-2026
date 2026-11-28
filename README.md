@@ -6,11 +6,11 @@ client versions are unsupported. The patch leaves the original game files intact
 ## Installation
 
 1. Extract all the files from the release ZIP (`2026Patch-<version>-x64.zip`) into the
-   folder containing `RecRoom.exe`: `2026patch.dll`, `PreserveLoader.dll`,
+   folder containing `RecRoom.exe`: `2026patch.dll`, `Recrekt.dll`,
    `2026patch.ini` and the batch launchers.
 2. Edit `2026patch.ini` using the connection details supplied by your server operator.
-3. Run `Install-PreserveLoader.bat` once. It moves the client's own `Referee.dll`
-   into `preserve\` and puts the preservation loader in its place, so the client
+3. Run `Install-Recrekt.bat` once. It moves the client's own `Referee.dll`
+   into `preserve\` and puts Recrekt in its place, so the client
    binds the patch through its own import instead of through an external injector.
 4. Run `RecRoomScreen.bat` for desktop mode or `RecRoomVR.bat` for VR.
 
@@ -69,7 +69,7 @@ and `Verbose` to `EnableTracing`. On/off settings accept `true`/`false` or `1`/`
 - **Unsupported client:** Use client `20260323.14`, Steam manifest `8867414017562658247`. Do not mix files from different
   game versions.
 - **The patch does not attach:** Check that `preserve\Referee.dll` exists and that
-  `preserve\modules\2026patch.dll` is next to it. `Install-PreserveLoader.bat`
+  `preserve\modules\2026patch.dll` is next to it. `Install-Recrekt.bat`
   sets both up; `Restore-RefereeProtector.bat` puts the original back.
 - **Connection problems:** Confirm addresses and the public key with your server
   operator. The developer menu's transport address can show `none` at the title screen until a room
@@ -77,7 +77,7 @@ and `Verbose` to `EnableTracing`. On/off settings accept `true`/`false` or `1`/`
 - **Need more information:** Check `2026patch.log` in the game folder. Set `EnableTracing=true`
   before your next launch, reproduce the issue, then set it back to `false`.
   The log resets each launch and is limited to 1 MiB, so save it before launching again.
-  `preserve-loader.log` next to `RecRoom.exe` holds the loader's own diagnostics.
+  `recrekt.log` next to `RecRoom.exe` holds the loader's own diagnostics.
 
 ## Other information
 

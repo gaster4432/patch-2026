@@ -17,7 +17,7 @@ namespace PatchLogging {
 
     // Startup resets the previous session before configuration is loaded, so a
     // malformed INI still leaves a diagnostic. The DLL directory is the anchor:
-    // the preservation loader can attach this patch from outside the game's working directory.
+    // Recrekt can attach this patch from outside the game's working directory.
     inline void BeginSession(const std::wstring& path) {
         logPath = path;
         if (FILE* file = _wfsopen(logPath.c_str(), L"w", _SH_DENYNO)) {

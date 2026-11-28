@@ -31,7 +31,7 @@ static DWORD WINAPI InitializePatch(void* parameter) {
     //
     // The configuration is looked for next to the DLL first, then next to the
     // game executable. The second location is what a user has: under the
-    // preservation proxy the patch is loaded from preserve\modules, but
+    // Recrekt the patch is loaded from preserve\modules, but
     // 2026patch.ini belongs beside RecRoom.exe with the rest of the drop-in
     // files. Without the fallback the proxy install would need a second copy of
     // the INI in a folder the user never sees.
